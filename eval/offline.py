@@ -37,6 +37,17 @@ class EvalFakeLLM(FakeLLM):
             parsed = self._baseline_draft(user) if self.mode == "baseline" else self._agent_draft(user)
         elif name == "RelevanceBatch":
             parsed = schema(keep_urls=[])
+        elif name == "VerificationBatch":
+            from agent.schemas import ClaimVerification, VerificationLabel
+
+            count = len(re.findall(r"^\[\d+\] claim:", user, flags=re.MULTILINE))
+            parsed = schema(verifications=[
+                ClaimVerification(finding_index=i, label=VerificationLabel.SUPPORTED,
+                                  reason="synthetic fixture verdict", snippet="synthetic fixture evidence")
+                for i in range(count)
+            ])
+        elif name == "ConflictReport":
+            parsed = schema(conflicts=[])
         else:
             from agent.llm import LLMError
 

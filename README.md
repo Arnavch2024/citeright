@@ -1,4 +1,4 @@
-# Research Agent
+# citeright: a research agent that verifies its own claims
 
 A small, production-minded CLI research agent. Give it a question; it plans,
 calls tools, filters evidence, and returns a structured, source-grounded
@@ -50,6 +50,10 @@ cp .env.example .env               # then fill in the keys you want to use
 | `CACHE_ENABLED` | `true` | Disk cache (search/fetch) for reproducible evals |
 | `RETRIEVAL_BACKEND` | `bm25` | `bm25` \| `embeddings` |
 | `PASSAGES_K` | `5` | Top-k passages per document |
+| `VERIFIER_ENABLED` | `true` | Run claim verification |
+| `VERIFIER_PROVIDER` | generator provider | Optional second provider for verification |
+| `MIN_VERIFIED_RATIO` | `0.7` | Minimum supported-claim ratio before LOW confidence |
+| `MIN_COVERAGE` | `0.5` | Minimum sourced sub-question coverage |
 
 Search degrades gracefully: if neither Exa nor Tavily is configured, web search
 falls back to DuckDuckGo (no key needed).
@@ -60,6 +64,7 @@ falls back to DuckDuckGo (no key needed).
 python main.py research "your question"            # uses cache
 python main.py research "your question" --no-cache # bypass disk cache
 python main.py check                               # verify config + tool wiring
+python main.py replay <run_id>                     # replay from saved LLM outputs + cache, offline
 ```
 
 `research` saves a JSON and a Markdown report to `outputs/{run_id}.{json,md}`
@@ -69,8 +74,10 @@ tools, and schema fields without making any network calls.
 ### Tests & eval
 
 ```bash
-python -m pytest -q                       # 74 unit tests, fully mocked (no network)
+python -m pytest -q                       # mocked unit tests (no network)
 python -m eval.run_eval                   # offline eval (no keys) → eval/EVALUATION.md + samples
+python -m eval.run_eval --no-filter       # source-filter ablation only
+python -m eval.run_eval --no-verifier     # verifier ablation only
 python -m eval.run_eval --live            # live LLM + real tools
 python -m eval.run_eval --live --judge    # adds an other-provider claim-support judge
 ```
@@ -90,8 +97,10 @@ flowchart TD
     CHECK -- sufficient --> SYNTH
     CHECK -- "still insufficient" --> LOW["low-confidence flag"]
     LOW --> SYNTH
-    SYNTH["SYNTHESIZE (strong LLM, no tools)<br/>claims cite only allowed source_ids;<br/>prefer 'not found' over guessing"] --> CONF
-    CONF["Confidence: final = min(code_level, llm_level)"]
+    SYNTH["SYNTHESIZE (strong LLM, no tools)<br/>claims cite only allowed source_ids;<br/>prefer 'not found' over guessing"] --> VERIFY
+    VERIFY["VERIFY (cheap LLM, no tools)<br/>check claims against cited passages;<br/>drop unsupported claims"] --> CONFLICTS
+    CONFLICTS["CONFLICTS (cheap LLM + numeric check)<br/>surface source disagreements"] --> CONF
+    CONF["Confidence: final = min(code_level, llm_level)<br/>abstain on thin verification or coverage"]
     CONF --> VAL
     VAL{"VALIDATE (code)<br/>cited ids/urls retrieved?<br/>findings & short_answer non-empty?"}
     VAL -- problems --> REPAIR["one repair retry (strong LLM)"]
@@ -103,7 +112,7 @@ flowchart TD
 ```
 
 The pipeline is an explicit state machine in `agent/orchestrator.py`:
-`PLAN → EXECUTE → CHECK → (one optional REPLAN) → SYNTHESIZE → VALIDATE`.
+`PLAN → EXECUTE → CHECK → (one optional REPLAN) → SYNTHESIZE → VERIFY → CONFLICTS → VALIDATE`.
 Each state is logged to a JSONL trace. No hidden agent loop — every
 transition is a branch you can read.
 
@@ -261,6 +270,27 @@ are real, or what the confidence should be.
 
 ---
 
+## Trust layer
+
+After synthesis, `agent/verifier.py` checks each finding using only passages from
+its cited `source_ids`. Supported findings stay, partial findings stay with a
+label and evidence snippet, and unsupported findings are dropped. The verifier
+uses the cheap model tier and has no tools. `VERIFIER_PROVIDER` can select a
+second configured provider; otherwise the run records
+`verifier_same_provider=true` in metadata and limitations.
+
+`agent/conflicts.py` combines a deterministic same-entity/metric number check
+with a cheap structured LLM pass for textual disagreement. The Markdown report
+shows positions under **Conflicting evidence**. Any conflict lowers code
+confidence one step. `MIN_VERIFIED_RATIO` (default 0.7) and `MIN_COVERAGE`
+(default 0.5) force LOW confidence when evidence is too thin, with missing
+sub-questions and dropped-claim counts listed in limitations.
+
+Replay uses saved structured LLM outputs and the local tool cache, with network
+access blocked. Run `python main.py replay <run_id>`. It fails with the cache
+keys it cannot find. Older traces without saved LLM outputs cannot be replayed
+deterministically; cached tools and outputs must still be present.
+
 ## How to make it production-ready?
 
 This is a take-home demonstration, not a service. To harden it:
@@ -348,9 +378,11 @@ All of these are derivable from the JSONL trace and the `RunMetadata` block.
 
 `eval/run_eval.py` runs each query and reports schema validity, citation
 validity (cited URLs were retrieved), tool path used, latency, approximate
-cost, and confidence — alongside a **non-agentic baseline** (single strong LLM
-call, no tools) for comparison. The optional `--judge` runs a claim-support
-check on a *different* provider than the generator. Results are written to
+cost, verification ratio, dropped claims, conflicts, and confidence across the
+baseline, full agent, no-filter, and no-verifier variants. Use `--no-filter` or
+`--no-verifier` to run one ablation; `--baseline` includes the single-call
+baseline. The optional `--judge` runs a claim-support check on a *different*
+provider than the generator. Results are written to
 `eval/EVALUATION.md`; up to 3 sample answers are copied to `outputs/`.
 
 Run `python -m eval.run_eval` (offline, no keys) to regenerate
@@ -379,6 +411,15 @@ real trafilatura extractor on `eval/fixtures/injection.html`.
 - **Confidence is a heuristic.** The code floor is a deliberate, conservative
   approximation of "how much do we trust this." It will sometimes understate
   well-grounded answers and can't capture domain-specific trust nuance.
+- **The verifier can be wrong.** It is a model judgment, not a proof; using one
+  configured provider also leaves same-provider bias. Runs expose that in
+  metadata and limitations.
+- **Trust checks add cost and latency.** The verifier and conflict detector each
+  make a cheap-tier call per run. In the latest offline fixture run, full agent
+  mean latency was 46 ms higher than the no-verifier ablation; rough weighted
+  cost was about $0.00008/run higher. These are synthetic measurements from fake
+  model latency and token estimates, not live provider charges. Live values
+  depend on provider, prompt size, and network timing.
 
 ## Future work
 
@@ -404,6 +445,8 @@ agent/
   executor.py         # run chosen tools async, fetch, score, select passages
   check.py            # code-only ≥2 independent-domains check
   synthesizer.py      # strong-tier, no tools, cite allowed ids only
+  verifier.py         # cheap-tier claim checks against cited passages
+  conflicts.py        # cross-source conflict detection
   validator.py        # citation/code check, one repair, sanitize, partial result
   confidence.py       # code floor + final = min(code, llm)
   schemas.py          # all Pydantic contracts (single source of truth)

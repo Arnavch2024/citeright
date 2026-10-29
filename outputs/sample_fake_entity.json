@@ -4,7 +4,8 @@
   "key_findings": [
     {
       "claim": "No retrieved source confirms ZephyrNimbus HR or a Series B.",
-      "source_ids": []
+      "source_ids": [],
+      "verification": null
     }
   ],
   "sources": [
@@ -12,7 +13,7 @@
       "id": "s1",
       "url": "https://github.com/milvus-io/milvus",
       "title": "milvus-io/milvus",
-      "retrieved_at": "2026-10-28T13:50:34.904268Z",
+      "retrieved_at": "2026-10-29T17:06:49.206152Z",
       "domain_type": "repo"
     }
   ],
@@ -21,16 +22,17 @@
   "assumptions_and_limitations": [
     "The named company may not exist.",
     "Replan: add a second independent domain.",
-    "Evidence check failed after one replan; confidence is capped."
+    "Evidence check failed after one replan; confidence is capped.",
+    "Verifier used the generator's provider (verifier_same_provider=true); provider independence is unavailable."
   ],
   "next_steps": [
     "Treat the entity as unverified."
   ],
   "metadata": {
-    "run_id": "719b82300d34",
-    "latency_ms": 37.31809998862445,
-    "input_tokens": 1425,
-    "output_tokens": 238,
+    "run_id": "bfb39e14bbd4",
+    "latency_ms": 111.26750003313646,
+    "input_tokens": 1781,
+    "output_tokens": 247,
     "tool_calls": 2,
     "replan_used": true,
     "provider": "gemini",
@@ -44,6 +46,13 @@
     "tool_path": [
       "web_search",
       "github_repo_stats"
-    ]
-  }
+    ],
+    "claims_dropped": 0,
+    "conflicts_found": 0,
+    "verifier_same_provider": true,
+    "verifier_ran": false,
+    "verified_ratio": 0.0
+  },
+  "verified_ratio": 0.0,
+  "conflicts": []
 }

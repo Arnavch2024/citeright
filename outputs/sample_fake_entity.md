@@ -12,6 +12,10 @@
 
 - `s1` [milvus-io/milvus](https://github.com/milvus-io/milvus)
 
+## Conflicting evidence
+
+- No conflicts detected.
+
 ## Confidence
 
 **low** — no corroboration | 1 independent domains; covered 1/2 sub-questions; 0 tool failures; one replan used; code=low llm=low final=low
@@ -21,6 +25,7 @@
 - The named company may not exist.
 - Replan: add a second independent domain.
 - Evidence check failed after one replan; confidence is capped.
+- Verifier used the generator's provider (verifier_same_provider=true); provider independence is unavailable.
 
 ## Next steps
 
@@ -28,9 +33,9 @@
 
 ## Run metadata
 
-- run_id: `719b82300d34`
-- latency_ms: 37
-- tokens: 1425 in / 238 out
+- run_id: `bfb39e14bbd4`
+- latency_ms: 111
+- tokens: 1781 in / 247 out
 - tool_calls: 2
 - replan_used: True
 - cache_hits: 0

@@ -6,7 +6,12 @@
       "claim": "Retrieved primary-looking pages support a cautious comparison.",
       "source_ids": [
         "s1"
-      ]
+      ],
+      "verification": {
+        "label": "supported",
+        "reason": "synthetic fixture verdict",
+        "snippet": null
+      }
     }
   ],
   "sources": [
@@ -14,30 +19,31 @@
       "id": "s1",
       "url": "https://qdrant.tech/documentation/",
       "title": "https://qdrant.tech/documentation/",
-      "retrieved_at": "2026-10-28T13:50:34.452296Z",
+      "retrieved_at": "2026-10-29T17:06:47.376119Z",
       "domain_type": "official_docs"
     },
     {
       "id": "s2",
       "url": "https://milvus.io/docs",
       "title": "https://milvus.io/docs",
-      "retrieved_at": "2026-10-28T13:50:34.452296Z",
+      "retrieved_at": "2026-10-29T17:06:47.376119Z",
       "domain_type": "official_docs"
     }
   ],
   "confidence": "medium",
-  "confidence_rationale": "limited but non-empty evidence | 2 independent domains; covered 1/1 sub-questions; 0 tool failures; code=medium llm=medium final=medium",
+  "confidence_rationale": "limited but non-empty evidence | 2 independent domains; covered 1/1 sub-questions; 0 tool failures; verified_ratio=1.00 (0 dropped); code=medium llm=medium final=medium",
   "assumptions_and_limitations": [
-    "India-headquartered B2B HR products."
+    "India-headquartered B2B HR products.",
+    "Verifier used the generator's provider (verifier_same_provider=true); provider independence is unavailable."
   ],
   "next_steps": [
     "Fetch remaining vendor docs."
   ],
   "metadata": {
-    "run_id": "cfc7fb5ac137",
-    "latency_ms": 59.5741999859456,
-    "input_tokens": 1159,
-    "output_tokens": 166,
+    "run_id": "6dc414206d33",
+    "latency_ms": 78.05139996344224,
+    "input_tokens": 2240,
+    "output_tokens": 208,
     "tool_calls": 3,
     "replan_used": false,
     "provider": "gemini",
@@ -49,6 +55,13 @@
     "tool_path": [
       "web_search",
       "fetch_page"
-    ]
-  }
+    ],
+    "claims_dropped": 0,
+    "conflicts_found": 0,
+    "verifier_same_provider": true,
+    "verifier_ran": true,
+    "verified_ratio": 1.0
+  },
+  "verified_ratio": 1.0,
+  "conflicts": []
 }

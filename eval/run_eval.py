@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -56,6 +58,24 @@ def _citations_ok(answer: ResearchAnswer) -> bool:
 
 def _usd(settings: Settings, inp: int, out: int) -> float:
     return (inp / 1_000_000) * settings.strong_input_usd_per_m + (out / 1_000_000) * settings.strong_output_usd_per_m
+
+
+def _trace_usd(settings: Settings, answer: ResearchAnswer) -> float:
+    """Estimate spend with the configured cheap/strong rates per traced call."""
+    path = settings.traces_dir / f"{answer.metadata.run_id}.jsonl"
+    if not path.exists():
+        return _usd(settings, answer.metadata.input_tokens, answer.metadata.output_tokens)
+    total = 0.0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        if event.get("step") != "llm":
+            continue
+        cheap = event.get("extra", {}).get("tier") == "cheap"
+        inp_rate = settings.cheap_input_usd_per_m if cheap else settings.strong_input_usd_per_m
+        out_rate = settings.cheap_output_usd_per_m if cheap else settings.strong_output_usd_per_m
+        total += (event.get("input_tokens") or 0) / 1_000_000 * inp_rate
+        total += (event.get("output_tokens") or 0) / 1_000_000 * out_rate
+    return total
 
 
 def _score_row(spec: dict, answer: ResearchAnswer, schema_ok: bool, cite_ok: bool) -> tuple[list[str], list[str]]:
@@ -131,7 +151,15 @@ async def _judge(answer: ResearchAnswer, settings: Settings) -> str:
         return f"error:{type(exc).__name__}"
 
 
-async def _run_agent(spec: dict, settings: Settings, live: bool) -> ResearchAnswer:
+async def _run_agent(
+    spec: dict, settings: Settings, live: bool, *, no_filter: bool = False, no_verifier: bool = False
+) -> ResearchAnswer:
+    settings = settings.model_copy(
+        update={
+            "source_filter_enabled": not no_filter and settings.source_filter_enabled,
+            "verifier_enabled": not no_verifier and settings.verifier_enabled,
+        }
+    )
     empty = spec["id"] == "fake_entity"
     tracer = Tracer.create(settings.traces_dir)
     if live:
@@ -158,12 +186,12 @@ def _write_md(rows: list[dict], mode: str) -> None:
     lines = [
         "# Evaluation",
         "",
-        f"Mode: **{mode}**. Agent vs a single-shot baseline (no tools).",
+        f"Mode: **{mode}**. Offline figures are synthetic; live latency and cost are estimates.",
         "Citations are valid when every cited `source_id`/`url` is in `sources[]` (retrieved set).",
         "Cost is a rough USD estimate from token counts, not a bill.",
         "",
-        "| query | expected behavior | actual | worked | failed |",
-        "|---|---|---|---|---|",
+        "| query | variant | schema | citations | behavior checks | tool path | verified ratio | claims dropped | conflicts | confidence | latency | approx cost |",
+        "|---|---|---|---|---|---|---:|---:|---:|---|---:|---:|",
     ]
     for row in rows:
         def cell(text: str) -> str:
@@ -174,14 +202,50 @@ def _write_md(rows: list[dict], mode: str) -> None:
             + " | ".join(
                 [
                     cell(row["id"]),
-                    cell(row["expected"]),
-                    cell(row["actual"]),
-                    cell(row["worked"] or "—"),
-                    cell(row["failed"] or "—"),
+                    cell(row["variant"]),
+                    str(row["schema"]),
+                    str(row["citations"]),
+                    cell(row["checks"]),
+                    cell(row["tool_path"]),
+                    cell(row["verified_ratio"]),
+                    str(row["claims_dropped"]),
+                    str(row["conflicts"]),
+                    cell(row["confidence"]),
+                    cell(row["latency"]),
+                    cell(row["cost"]),
                 ]
             )
             + " |"
         )
+    lines += [
+        "",
+        "## Mean latency and estimated cost by variant",
+        "",
+        "| variant | mean latency | mean approx cost |",
+        "|---|---:|---:|",
+    ]
+    for variant in ("baseline", "full agent", "no-filter", "no-verifier"):
+        group = [row for row in rows if row["variant"] == variant]
+        if not group:
+            continue
+        latencies = [float(re.search(r"([\d.]+) ms", row["latency"]).group(1)) for row in group]
+        costs = [float(re.search(r"\$([\d.]+)", row["cost"]).group(1)) for row in group]
+        mean_latency = sum(latencies) / len(latencies)
+        mean_cost = sum(costs) / len(costs)
+        prefix = "synthetic " if "offline" in mode else ""
+        lines.append(f"| {variant} | {prefix}{mean_latency:.1f} ms | {prefix}~${mean_cost:.5f} |")
+    lines += [
+        "",
+        "## Confidence vs correctness",
+        "",
+        "Correctness labels are intentionally blank in `eval/queries.yaml` for manual annotation.",
+        "",
+        "| query | confidence | correct (hand label) |",
+        "|---|---|---|",
+    ]
+    for row in rows:
+        if row["variant"] == "full agent":
+            lines.append(f"| {row['id']} | {row['confidence']} | {row['correct'] or ''} |")
     lines += [
         "",
         "## Notes",
@@ -198,6 +262,9 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true", help="Use configured LLM + real tools")
     parser.add_argument("--judge", action="store_true", help="Optional other-provider claim judge")
+    parser.add_argument("--no-filter", action="store_true", help="Run a no-source-filter ablation")
+    parser.add_argument("--no-verifier", action="store_true", help="Run a no-verifier ablation")
+    parser.add_argument("--baseline", action="store_true", help="Include the single-call baseline (included by default)")
     args = parser.parse_args()
 
     settings = load_settings()
@@ -221,47 +288,63 @@ async def main() -> None:
     samples: list[tuple[str, ResearchAnswer]] = []
 
     for spec in specs:
-        answer = await _run_agent(spec, settings, live)
-        schema_ok = _schema_ok(answer)
-        cite_ok = _citations_ok(answer)
-        worked, failed = _score_row(spec, answer, schema_ok, cite_ok)
-        cost = _usd(settings, answer.metadata.input_tokens, answer.metadata.output_tokens)
-        actual = (
-            f"conf={answer.confidence}; tools={answer.metadata.tool_path}; "
-            f"{answer.metadata.latency_ms:.0f}ms; ~${cost:.4f}; "
-            f"findings={len(answer.key_findings)}; sources={len(answer.sources)}"
-        )
-        if args.judge and live:
-            actual += f"; judge={await _judge(answer, settings)}"
+        variants = [("full agent", False, False), ("no-filter", True, False), ("no-verifier", False, True)]
+        # CLI flags select requested ablations for quick runs; default compares the full matrix.
+        if args.no_filter or args.no_verifier:
+            variants = [
+                variant for variant in variants
+                if (args.no_filter and variant[0] == "no-filter")
+                or (args.no_verifier and variant[0] == "no-verifier")
+            ]
+        for variant, no_filter, no_verifier in variants:
+            answer = await _run_agent(spec, settings, live, no_filter=no_filter, no_verifier=no_verifier)
+            schema_ok = _schema_ok(answer)
+            cite_ok = _citations_ok(answer)
+            worked, failed = _score_row(spec, answer, schema_ok, cite_ok)
+            cost = _trace_usd(settings, answer)
+            synthetic = "synthetic " if not live else ""
+            rows.append({
+                "id": spec["id"], "variant": variant, "schema": "valid" if schema_ok else "invalid",
+                "citations": "valid" if cite_ok else "invalid",
+                "checks": "; ".join(worked + [f"FAILED: {x}" for x in failed]) or "—",
+                "tool_path": ", ".join(answer.metadata.tool_path) or "none",
+                "verified_ratio": (f"{synthetic}{answer.verified_ratio:.2f}" if answer.metadata.verifier_ran else "n/a (not run)"),
+                "claims_dropped": f"{synthetic}{answer.metadata.claims_dropped}",
+                "conflicts": f"{synthetic}{answer.metadata.conflicts_found}",
+                "confidence": str(answer.confidence),
+                "latency": f"{synthetic}{answer.metadata.latency_ms:.0f} ms",
+                "cost": f"{synthetic}~${cost:.4f}",
+                "correct": spec.get("correct", ""),
+            })
+            if args.judge and live and variant == "full agent":
+                print(f"{spec['id']}: judge={await _judge(answer, settings)}")
+            if spec.get("sample") and variant == "full agent":
+                samples.append((spec["id"], answer))
 
-        if live:
-            bl_llm = build_llm(settings)
-        else:
-            bl_llm = EvalFakeLLM(settings, mode="baseline")
-        baseline = await run_baseline(
-            bl_llm,
-            spec["query"],
-            provider=settings.llm_provider if live else "fake",
-            cheap=settings.cheap_model(),
-            strong=settings.strong_model(),
-        )
-        b_cite = _citations_ok(baseline)
-        actual += f" | baseline conf={baseline.confidence} citations_ok={b_cite}"
+        if args.baseline or (not args.no_filter and not args.no_verifier):
+            if live:
+                bl_llm = build_llm(settings)
+            else:
+                bl_llm = EvalFakeLLM(settings, mode="baseline")
+            baseline = await run_baseline(
+                bl_llm, spec["query"], provider=settings.llm_provider if live else "fake",
+                cheap=settings.cheap_model(), strong=settings.strong_model(),
+            )
+            baseline_cost = _usd(settings, baseline.metadata.input_tokens, baseline.metadata.output_tokens)
+            baseline_synthetic = "synthetic " if not live else ""
+            rows.append({
+                "id": spec["id"], "variant": "baseline", "schema": "valid" if _schema_ok(baseline) else "invalid",
+                "citations": "valid" if _citations_ok(baseline) else "invalid", "verified_ratio": "n/a (not run)",
+                "checks": "baseline control", "tool_path": "none",
+                "claims_dropped": "synthetic 0" if not live else "0",
+                "conflicts": "synthetic 0" if not live else "0", "confidence": str(baseline.confidence),
+                "latency": f"{baseline_synthetic}{baseline.metadata.latency_ms:.0f} ms",
+                "cost": f"{baseline_synthetic}~${baseline_cost:.4f}",
+                "correct": spec.get("correct", ""),
+            })
+        print(f"{spec['id']}: evaluated {len(variants)} agent variant(s)")
 
-        rows.append(
-            {
-                "id": spec["id"],
-                "expected": spec["expected"],
-                "actual": actual,
-                "worked": ", ".join(worked),
-                "failed": ", ".join(failed),
-            }
-        )
-        print(f"{spec['id']}: worked={worked} failed={failed}")
-        if spec.get("sample"):
-            samples.append((spec["id"], answer))
-
-    mode = "live" if live else "offline"
+    mode = "live" if live else "offline (all numbers synthetic)"
     _write_md(rows, mode)
 
     out = ROOT / "outputs"

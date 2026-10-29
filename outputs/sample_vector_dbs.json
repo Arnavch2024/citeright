@@ -6,7 +6,12 @@
       "claim": "Retrieved primary-looking pages support a cautious comparison.",
       "source_ids": [
         "s2"
-      ]
+      ],
+      "verification": {
+        "label": "supported",
+        "reason": "synthetic fixture verdict",
+        "snippet": null
+      }
     }
   ],
   "sources": [
@@ -14,37 +19,38 @@
       "id": "s2",
       "url": "https://qdrant.tech/documentation/",
       "title": "https://qdrant.tech/documentation/",
-      "retrieved_at": "2026-10-28T13:50:33.976743Z",
+      "retrieved_at": "2026-10-29T17:06:46.453476Z",
       "domain_type": "official_docs"
     },
     {
       "id": "s3",
       "url": "https://milvus.io/docs",
       "title": "https://milvus.io/docs",
-      "retrieved_at": "2026-10-28T13:50:33.978321Z",
+      "retrieved_at": "2026-10-29T17:06:46.453476Z",
       "domain_type": "official_docs"
     },
     {
       "id": "s1",
       "url": "https://github.com/qdrant/qdrant",
       "title": "qdrant/qdrant",
-      "retrieved_at": "2026-10-28T13:50:33.976743Z",
+      "retrieved_at": "2026-10-29T17:06:46.453476Z",
       "domain_type": "repo"
     }
   ],
   "confidence": "medium",
-  "confidence_rationale": "limited but non-empty evidence | 3 independent domains; covered 1/1 sub-questions; 0 tool failures; code=high llm=medium final=medium",
+  "confidence_rationale": "limited but non-empty evidence | 3 independent domains; covered 1/1 sub-questions; 0 tool failures; verified_ratio=1.00 (0 dropped); code=high llm=medium final=medium",
   "assumptions_and_limitations": [
-    "Top-3 means widely used OSS engines: Qdrant, Milvus, Weaviate."
+    "Top-3 means widely used OSS engines: Qdrant, Milvus, Weaviate.",
+    "Verifier used the generator's provider (verifier_same_provider=true); provider independence is unavailable."
   ],
   "next_steps": [
     "Fetch remaining vendor docs."
   ],
   "metadata": {
-    "run_id": "856330e45f74",
-    "latency_ms": 421.3854999979958,
-    "input_tokens": 1573,
-    "output_tokens": 192,
+    "run_id": "b43f2f0ae82f",
+    "latency_ms": 432.9126999946311,
+    "input_tokens": 2805,
+    "output_tokens": 234,
     "tool_calls": 4,
     "replan_used": false,
     "provider": "gemini",
@@ -57,6 +63,13 @@
       "web_search",
       "github_repo_stats",
       "fetch_page"
-    ]
-  }
+    ],
+    "claims_dropped": 0,
+    "conflicts_found": 0,
+    "verifier_same_provider": true,
+    "verifier_ran": true,
+    "verified_ratio": 1.0
+  },
+  "verified_ratio": 1.0,
+  "conflicts": []
 }
