@@ -67,6 +67,13 @@ class Settings(BaseModel):
     retrieval_backend: RetrievalBackend = "bm25"
     passages_k: int = Field(default=5, ge=1, le=20)
 
+    # Trust layer: claim verification, conflict detection, abstention thresholds.
+    verifier_enabled: bool = True
+    verifier_provider: str | None = None  # different provider than the generator, if set
+    min_verified_ratio: float = Field(default=0.7, ge=0.0, le=1.0)
+    min_coverage: float = Field(default=0.5, ge=0.0, le=1.0)
+    source_filter_enabled: bool = True  # False => --no-filter skips scoring/dedup
+
     traces_dir: Path = Path("traces")
     outputs_dir: Path = Path("outputs")
     fixtures_dir: Path = Path("eval/fixtures")
@@ -114,6 +121,9 @@ def load_settings(env_file: Path | None = None) -> Settings:
     retrieval = _env("RETRIEVAL_BACKEND", "bm25")
     if retrieval not in {"bm25", "embeddings"}:
         raise ValueError(f"RETRIEVAL_BACKEND must be bm25|embeddings, got {retrieval!r}")
+    vprovider = _env("VERIFIER_PROVIDER", "")
+    if vprovider and vprovider not in {"openai", "gemini", "fake"}:
+        raise ValueError(f"VERIFIER_PROVIDER must be openai|gemini|fake, got {vprovider!r}")
     return Settings(
         llm_provider=provider,  # type: ignore[arg-type]
         openai_api_key=_env("OPENAI_API_KEY") or None,
@@ -136,6 +146,11 @@ def load_settings(env_file: Path | None = None) -> Settings:
         cache_dir=Path(_env("CACHE_DIR", ".cache")),
         retrieval_backend=retrieval,  # type: ignore[arg-type]
         passages_k=_env_int("PASSAGES_K", 5),
+        verifier_enabled=_env_bool("VERIFIER_ENABLED", True),
+        verifier_provider=_env("VERIFIER_PROVIDER") or None,
+        min_verified_ratio=_env_float("MIN_VERIFIED_RATIO", 0.7),
+        min_coverage=_env_float("MIN_COVERAGE", 0.5),
+        source_filter_enabled=_env_bool("SOURCE_FILTER_ENABLED", True),
         traces_dir=Path(_env("TRACES_DIR", "traces")),
         outputs_dir=Path(_env("OUTPUTS_DIR", "outputs")),
         fixtures_dir=Path(_env("FIXTURES_DIR", "eval/fixtures")),

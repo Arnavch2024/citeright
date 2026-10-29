@@ -33,6 +33,21 @@ class ConfidenceLevel(StrEnum):
     HIGH = "high"
 
 
+class VerificationLabel(StrEnum):
+    """Verifier verdict for a single claim vs its cited evidence."""
+    SUPPORTED = "supported"
+    PARTIAL = "partial"
+    UNSUPPORTED = "unsupported"
+
+
+class FindingVerification(BaseModel):
+    """Compact verifier result stored alongside a surviving finding."""
+
+    label: VerificationLabel
+    reason: str = ""
+    snippet: str | None = None
+
+
 class DomainType(StrEnum):
     OFFICIAL_DOCS = "official_docs"
     REPO = "repo"
@@ -54,14 +69,20 @@ class PipelineState(StrEnum):
     CHECK = "CHECK"
     REPLAN = "REPLAN"
     SYNTHESIZE = "SYNTHESIZE"
+    VERIFY = "VERIFY"
     VALIDATE = "VALIDATE"
 
 
 class Finding(BaseModel):
-    """A single claim. source_ids may be empty only for explicit 'not found' claims."""
+    """A single claim. source_ids may be empty only for explicit 'not found' claims.
+
+    verification is filled by VERIFY; None means the claim
+    was not checked (e.g. an explicit 'not found' with no sources, or verifier off).
+    """
 
     claim: str = Field(min_length=1)
     source_ids: list[str] = Field(default_factory=list)
+    verification: FindingVerification | None = None
 
 
 class Source(BaseModel):
@@ -98,6 +119,48 @@ class RunMetadata(BaseModel):
     cache_hits: int = 0
     low_evidence_flag: bool = False
     tool_path: list[str] = Field(default_factory=list)
+    # Trust-layer metrics so evals can measure verification and abstention.
+    claims_dropped: int = 0
+    conflicts_found: int = 0
+    verifier_same_provider: bool = False
+    verifier_ran: bool = False
+    verified_ratio: float = 0.0
+
+
+class ConflictPosition(BaseModel):
+    """One source's take on a contested topic."""
+
+    claim: str
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class Conflict(BaseModel):
+    """A disagreement across sources on the same topic/metric."""
+
+    topic: str
+    positions: list[ConflictPosition] = Field(default_factory=list)
+    kind: str = "textual"  # "numeric" | "textual" — numeric came from the deterministic check
+
+
+class ClaimVerification(BaseModel):
+    """Verifier verdict for one finding. finding_index maps back to the input order."""
+
+    finding_index: int = Field(ge=0)
+    label: VerificationLabel
+    reason: str = ""
+    snippet: str | None = None
+
+
+class VerificationBatch(BaseModel):
+    """LLM output schema for the verifier: one verdict per finding, in order."""
+
+    verifications: list[ClaimVerification] = Field(default_factory=list)
+
+
+class ConflictReport(BaseModel):
+    """LLM output schema for conflict detection."""
+
+    conflicts: list[Conflict] = Field(default_factory=list)
 
 
 class ResearchAnswer(BaseModel):
@@ -110,6 +173,9 @@ class ResearchAnswer(BaseModel):
     assumptions_and_limitations: list[str]
     next_steps: list[str]
     metadata: RunMetadata
+    # Trust layer: how much of the synthesis survived verification + surfaced disagreements.
+    verified_ratio: float = 0.0
+    conflicts: list[Conflict] = Field(default_factory=list)
 
 
 class ToolChoice(BaseModel):
@@ -190,6 +256,11 @@ class ConfidenceSignals(BaseModel):
     code_level: ConfidenceLevel
     llm_level: ConfidenceLevel
     final_level: ConfidenceLevel
+    # Trust-layer inputs feed the abstention thresholds and the conflict step-down.
+    verified_ratio: float = 1.0
+    claims_dropped: int = 0
+    conflicts_found: int = 0
+    verifier_ran: bool = False
 
 
 class PartialErrorNote(BaseModel):

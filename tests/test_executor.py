@@ -1,7 +1,9 @@
+from datetime import datetime, timezone
+
 from agent.budget import RunBudget
 from agent.config import Settings
 from agent.executor import Executor
-from agent.schemas import ResearchPlan, SubQuestionPlan, ToolChoice, ToolName
+from agent.schemas import DomainType, ResearchPlan, Source, SubQuestionPlan, ToolChoice, ToolName
 from agent.tools.search import SearchHit
 from tests.fakes import FakeFetch, FakeGithub, FakeScholarly, FakeSearch
 
@@ -100,3 +102,45 @@ async def test_search_auto_fetches(tmp_path) -> None:
     hosts = {d.domain for d in result.documents}
     assert "docs.alpha.test" in hosts
     assert "docs.beta.test" in hosts
+
+
+async def test_no_filter_keeps_same_domain_documents(tmp_path) -> None:
+    settings = _settings(tmp_path).model_copy(update={"source_filter_enabled": False})
+    tools = {
+        "web_search": FakeSearch([
+            SearchHit(title="A", url="https://docs.alpha.test/a", snippet="a", provider="fake"),
+            SearchHit(title="B", url="https://docs.alpha.test/b", snippet="b", provider="fake"),
+        ]),
+        "fetch_page": FakeFetch(),
+        "github_repo_stats": FakeGithub(),
+        "scholarly_search": FakeScholarly(),
+    }
+    plan = ResearchPlan(assumptions=[], sub_questions=[SubQuestionPlan(
+        id="q1", question="docs", tools=[ToolChoice(name=ToolName.WEB_SEARCH, reason="test")],
+        sufficient_evidence="docs",
+    )], sufficient_evidence_overall="docs")
+    result = await Executor(settings, tools, RunBudget(settings)).run_plan(plan)
+    assert len(result.documents) == 2
+
+
+async def test_replay_restores_original_source_identity(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    url = "https://github.com/qdrant/qdrant"
+    original_time = datetime(2025, 1, 2, tzinfo=timezone.utc)
+    source = Source(id="original-s4", url=url, title="Saved title", retrieved_at=original_time,
+                    domain_type=DomainType.REPO)
+    tools = {
+        "web_search": FakeSearch([]),
+        "fetch_page": FakeFetch(),
+        "github_repo_stats": FakeGithub(),
+        "scholarly_search": FakeScholarly(),
+    }
+    plan = ResearchPlan(assumptions=[], sub_questions=[SubQuestionPlan(
+        id="q1", question="stats", tools=[ToolChoice(name=ToolName.GITHUB_REPO_STATS,
+                                                        reason="test", query_hint="qdrant/qdrant")],
+        sufficient_evidence="stats",
+    )], sufficient_evidence_overall="stats")
+    result = await Executor(settings, tools, RunBudget(settings), source_metadata_map={url: source}).run_plan(plan)
+    assert result.documents[0].source_id == "original-s4"
+    assert result.documents[0].title == "Saved title"
+    assert result.documents[0].retrieved_at == original_time

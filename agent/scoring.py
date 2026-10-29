@@ -53,13 +53,16 @@ def classify_domain(url: str) -> DomainType:
     return DomainType.OTHER
 
 
-def _recency_factor(published_at: datetime | None) -> float:
+def _recency_factor(published_at: datetime | None, reference_time: datetime | None = None) -> float:
     """Unknown dates are slightly discounted; stale pages more so. Never zero — a 2019 RFC still matters."""
     if published_at is None:
         return 0.85
     if published_at.tzinfo is None:
         published_at = published_at.replace(tzinfo=timezone.utc)
-    days = max(0, (utcnow() - published_at).days)
+    now = reference_time or utcnow()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    days = max(0, (now - published_at).days)
     if days <= 180:
         return 1.0
     if days <= 365:
@@ -95,11 +98,12 @@ def score_document(
     text: str,
     injection_flagged: bool = False,
     published_at: datetime | None = None,
+    reference_time: datetime | None = None,
 ) -> ScoredDocument:
     domain = registrable_host(url)
     dtype = classify_domain(url)
     length_f, thin = _length_factor(len(text.strip()))
-    score = TYPE_WEIGHT[dtype] * length_f * _recency_factor(published_at)
+    score = TYPE_WEIGHT[dtype] * length_f * _recency_factor(published_at, reference_time)
     if injection_flagged:
         score *= 0.5
     return ScoredDocument(

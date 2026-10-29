@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from agent.budget import RunBudget
@@ -20,6 +21,7 @@ from agent.schemas import (
     RelevanceBatch,
     ResearchPlan,
     ScoredDocument,
+    Source,
     SubQuestionPlan,
     ToolName,
 )
@@ -63,12 +65,16 @@ class Executor:
         budget: RunBudget,
         llm: LLMClient | None = None,
         tracer: Tracer | None = None,
+        source_metadata_map: dict[str, Source] | None = None,
+        reference_time: datetime | None = None,
     ) -> None:
         self.settings = settings
         self.tools = tools
         self.budget = budget
         self.llm = llm
         self.tracer = tracer
+        self.source_metadata_map = source_metadata_map or {}
+        self.reference_time = reference_time
         self._source_i = 0
         self._seen_urls: set[str] = set()
 
@@ -91,7 +97,8 @@ class Executor:
         for part in parts:
             docs.extend(part.documents)
             failures.extend(part.failures)
-        kept = select_sources(docs)
+        # WHY: the no-filter eval ablation isolates the effect of source scoring/dedup.
+        kept = select_sources(docs) if self.settings.source_filter_enabled else docs
         kept_ids = {d.source_id for d in kept}
         # Passages stay attached to each sub-question; documents are the global scored set.
         return ExecutionResult(
@@ -193,13 +200,15 @@ class Executor:
         self._seen_urls.add(url)
         result = await tool.run(FetchInput(url=url))
         assert isinstance(result, FetchOutput)
-        return score_document(
+        doc = score_document(
             source_id=self._sid(),
             url=result.final_url or result.url,
             title=result.title,
             text=result.text,
             injection_flagged=result.injection_flagged,
+            reference_time=self.reference_time,
         )
+        return self._restore_source_metadata(doc)
 
     async def _github(self, hint: str) -> ScoredDocument | None:
         tool = self.tools.get("github_repo_stats")
@@ -234,13 +243,15 @@ class Executor:
             f"Description: {stats.description}\n"
         )
         self._seen_urls.add(stats.url)
-        return score_document(
+        doc = score_document(
             source_id=self._sid(),
             url=stats.url,
             title=stats.repo,
             text=text,
             published_at=stats.last_commit_at,
+            reference_time=self.reference_time,
         )
+        return self._restore_source_metadata(doc)
 
     async def _scholarly(self, query: str) -> list[ScoredDocument]:
         tool = self.tools.get("scholarly_search")
@@ -260,16 +271,31 @@ class Executor:
 
                 year = datetime(paper.year, 1, 1, tzinfo=timezone.utc)
             text = f"# {paper.title}\n\nYear: {paper.year}\n\n{paper.abstract}\n"
-            docs.append(
-                score_document(
-                    source_id=self._sid(),
-                    url=paper.url,
-                    title=paper.title,
-                    text=text,
-                    published_at=year,
-                )
+            doc = score_document(
+                source_id=self._sid(),
+                url=paper.url,
+                title=paper.title,
+                text=text,
+                published_at=year,
+                reference_time=self.reference_time,
             )
+            docs.append(self._restore_source_metadata(doc))
         return docs
+
+    def _restore_source_metadata(self, doc: ScoredDocument) -> ScoredDocument:
+        """Reuse original source identity/timestamp so replay prompts stay stable."""
+        source = self.source_metadata_map.get(doc.url)
+        if source is None:
+            return doc
+        return doc.model_copy(
+            update={
+                "source_id": source.id,
+                "url": source.url,
+                "title": source.title,
+                "retrieved_at": source.retrieved_at,
+                "domain_type": source.domain_type,
+            }
+        )
 
 
 def evidence_for_prompt(results: list[SubQuestionResult], docs: list[ScoredDocument]) -> str:

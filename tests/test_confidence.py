@@ -71,3 +71,49 @@ def test_replan_caps_at_medium() -> None:
 
 def test_min_level() -> None:
     assert min_level(ConfidenceLevel.HIGH, ConfidenceLevel.LOW) is ConfidenceLevel.LOW
+
+
+def test_verified_ratio_below_threshold_forces_low() -> None:
+    docs = [_doc("a", "docs.qdrant.tech"), _doc("b", "milvus.io"), _doc("c", "weaviate.io")]
+    signals = assess_confidence(
+        docs=docs,
+        subquestions_with_evidence=2,
+        subquestions_total=2,
+        tool_failures=0,
+        replan_used=False,
+        llm_level=ConfidenceLevel.HIGH,
+        verified_ratio=0.5,
+        verifier_ran=True,
+        min_verified_ratio=0.7,
+    )
+    assert signals.final_level is ConfidenceLevel.LOW
+    assert signals.verified_ratio == 0.5
+
+
+def test_conflict_steps_down_confidence_one_level() -> None:
+    docs = [_doc("a", "docs.qdrant.tech"), _doc("b", "milvus.io"), _doc("c", "weaviate.io")]
+    signals = assess_confidence(
+        docs=docs,
+        subquestions_with_evidence=2,
+        subquestions_total=2,
+        tool_failures=0,
+        replan_used=False,
+        llm_level=ConfidenceLevel.HIGH,
+        conflicts_found=1,
+    )
+    assert signals.code_level is ConfidenceLevel.MEDIUM
+    assert signals.final_level is ConfidenceLevel.MEDIUM
+
+
+def test_coverage_below_configured_threshold_forces_low() -> None:
+    docs = [_doc("a", "docs.qdrant.tech"), _doc("b", "milvus.io")]
+    signals = assess_confidence(
+        docs=docs,
+        subquestions_with_evidence=1,
+        subquestions_total=3,
+        tool_failures=0,
+        replan_used=False,
+        llm_level=ConfidenceLevel.HIGH,
+        min_coverage=0.5,
+    )
+    assert signals.final_level is ConfidenceLevel.LOW

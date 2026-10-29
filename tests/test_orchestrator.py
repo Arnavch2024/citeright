@@ -2,11 +2,15 @@ from agent.config import Settings
 from agent.llm import FakeLLM
 from agent.orchestrator import Orchestrator
 from agent.schemas import (
+    ClaimVerification,
     ConfidenceLevel,
+    ConflictReport,
     Finding,
     ResearchPlan,
     SubQuestionPlan,
     SynthesisDraft,
+    VerificationBatch,
+    VerificationLabel,
     ToolChoice,
     ToolName,
 )
@@ -54,10 +58,19 @@ def _plan_web() -> ResearchPlan:
     )
 
 
+def _set_trust_responses(llm: FakeLLM) -> None:
+    llm.set("VerificationBatch", VerificationBatch(verifications=[
+        ClaimVerification(finding_index=0, label=VerificationLabel.SUPPORTED,
+                          reason="cited passage supports the claim", snippet="Primary-source documentation")
+    ]))
+    llm.set("ConflictReport", ConflictReport(conflicts=[]))
+
+
 async def test_happy_path_writes_outputs(tmp_path) -> None:
     settings = _settings(tmp_path)
     tracer = Tracer.create(settings.traces_dir, "run-happy")
     llm = FakeLLM(settings, tracer)
+    _set_trust_responses(llm)
     llm.set("ResearchPlan", _plan_web())
     llm.set(
         "SynthesisDraft",
@@ -78,12 +91,16 @@ async def test_happy_path_writes_outputs(tmp_path) -> None:
     assert (settings.outputs_dir / f"{answer.metadata.run_id}.json").exists()
     assert (settings.outputs_dir / f"{answer.metadata.run_id}.md").exists()
     assert answer.metadata.replan_used is False
+    assert answer.metadata.verifier_same_provider is True
+    assert any("verifier_same_provider=true" in x for x in answer.assumptions_and_limitations)
+    assert answer.key_findings[0].verification.snippet == "Primary-source documentation"
 
 
 async def test_invented_citation_is_sanitized(tmp_path) -> None:
     settings = _settings(tmp_path)
     tracer = Tracer.create(settings.traces_dir, "run-cite")
     llm = FakeLLM(settings, tracer)
+    _set_trust_responses(llm)
     llm.set("ResearchPlan", _plan_web())
     llm.set(
         "SynthesisDraft",
@@ -103,10 +120,37 @@ async def test_invented_citation_is_sanitized(tmp_path) -> None:
     assert answer.confidence is not ConfidenceLevel.HIGH or answer.metadata.errors
 
 
+async def test_all_unsupported_claims_take_partial_sanitize_path(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    tracer = Tracer.create(settings.traces_dir, "run-all-dropped")
+    llm = FakeLLM(settings, tracer)
+    llm.set("ResearchPlan", _plan_web())
+    llm.set("SynthesisDraft", SynthesisDraft(
+        short_answer="Unsubstantiated.",
+        key_findings=[Finding(claim="Unsupported claim.", source_ids=["s1"])],
+        confidence=ConfidenceLevel.HIGH,
+        confidence_rationale="draft confidence",
+        next_steps=["Find better evidence."],
+    ))
+    llm.set("VerificationBatch", VerificationBatch(verifications=[
+        ClaimVerification(finding_index=0, label=VerificationLabel.UNSUPPORTED,
+                          reason="cited passage does not support the claim")
+    ]))
+    llm.set("ConflictReport", ConflictReport(conflicts=[]))
+    answer = await Orchestrator(settings, llm=llm, tools=_tools(), tracer=tracer).run("Verify this")
+    assert answer.confidence is ConfidenceLevel.LOW
+    assert answer.short_answer == "Not enough cited evidence to answer."
+    assert answer.key_findings[0].source_ids == []
+    assert "partial result" in " ".join(answer.assumptions_and_limitations).lower()
+    assert answer.metadata.claims_dropped == 1
+    assert answer.verified_ratio == 0.0
+
+
 async def test_replan_flag_when_single_domain(tmp_path) -> None:
     settings = _settings(tmp_path)
     tracer = Tracer.create(settings.traces_dir, "run-replan")
     llm = FakeLLM(settings, tracer)
+    _set_trust_responses(llm)
     plans = iter(
         [
             _plan_web(),

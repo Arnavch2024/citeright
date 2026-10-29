@@ -7,7 +7,16 @@ from agent.schemas import ResearchAnswer
 
 def render_markdown(answer: ResearchAnswer) -> str:
     findings = "\n".join(
-        f"- {f.claim} ({', '.join(f.source_ids) or 'no source'})" for f in answer.key_findings
+        f"- {f.claim} ({', '.join(f.source_ids) or 'no source'})"
+        + (f" — **{f.verification.label}**: {f.verification.reason}" if f.verification else "")
+        + (f"\n  Evidence: “{f.verification.snippet}”" if f.verification and f.verification.snippet else "")
+        for f in answer.key_findings
+    )
+    conflicts = "\n".join(
+        "- **" + c.topic + "** (" + c.kind + "): " + "; ".join(
+            f"{p.claim} [sources: {', '.join(p.source_ids) or 'unspecified'}]" for p in c.positions
+        )
+        for c in answer.conflicts
     )
     sources = "\n".join(f"- `{s.id}` [{s.title}]({s.url})" for s in answer.sources)
     limits = "\n".join(f"- {x}" for x in answer.assumptions_and_limitations) or "- (none)"
@@ -26,6 +35,10 @@ def render_markdown(answer: ResearchAnswer) -> str:
 ## Sources
 
 {sources or '- (none)'}
+
+## Conflicting evidence
+
+{conflicts or '- No conflicts detected.'}
 
 ## Confidence
 

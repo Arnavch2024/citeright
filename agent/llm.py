@@ -14,6 +14,7 @@ relevance filtering should not spend a frontier model.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from abc import ABC, abstractmethod
@@ -79,12 +80,13 @@ class LLMClient(ABC):
         started = time.perf_counter()
         error: str | None = None
         inp = out = 0
+        parsed_obj: T | None = None
         try:
-            parsed, inp, out = await asyncio.wait_for(
+            parsed_obj, inp, out = await asyncio.wait_for(
                 self._generate(system, user, schema, model),
                 timeout=self.settings.per_call_timeout_s,
             )
-            return parsed
+            return parsed_obj
         except (TimeoutError, asyncio.TimeoutError) as exc:
             error = f"timeout after {self.settings.per_call_timeout_s}s"
             raise LLMError(error, retryable=True) from exc
@@ -106,6 +108,9 @@ class LLMClient(ABC):
             )
             if self.tracer:
                 self.tracer.totals.add_llm(inp, out)
+                # WHY store the parsed output: replay reconstructs a deterministic run
+                # from the trace + cache, so the LLM outputs must be recorded (not just
+                # truncated input previews). The trace file is local and gitignored.
                 self.tracer.log(
                     "llm",
                     model=model,
@@ -114,7 +119,12 @@ class LLMClient(ABC):
                     input_tokens=inp,
                     output_tokens=out,
                     error=error,
-                    extra={"tier": tier, "schema": schema.__name__},
+                    extra={
+                        "tier": tier,
+                        "schema": schema.__name__,
+                        "input_hash": hashlib.sha256(f"{system}\0{user}".encode("utf-8")).hexdigest(),
+                        "output": parsed_obj.model_dump(mode="json") if parsed_obj is not None else None,
+                    },
                 )
 
 
