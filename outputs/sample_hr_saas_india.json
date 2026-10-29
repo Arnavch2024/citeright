@@ -1,0 +1,54 @@
+{
+  "question": "Find 5 Indian B2B SaaS startups in HR tech and summarize their positioning",
+  "short_answer": "Grounded in retrieved sources only.",
+  "key_findings": [
+    {
+      "claim": "Retrieved primary-looking pages support a cautious comparison.",
+      "source_ids": [
+        "s1"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "s1",
+      "url": "https://qdrant.tech/documentation/",
+      "title": "https://qdrant.tech/documentation/",
+      "retrieved_at": "2026-10-28T13:50:34.452296Z",
+      "domain_type": "official_docs"
+    },
+    {
+      "id": "s2",
+      "url": "https://milvus.io/docs",
+      "title": "https://milvus.io/docs",
+      "retrieved_at": "2026-10-28T13:50:34.452296Z",
+      "domain_type": "official_docs"
+    }
+  ],
+  "confidence": "medium",
+  "confidence_rationale": "limited but non-empty evidence | 2 independent domains; covered 1/1 sub-questions; 0 tool failures; code=medium llm=medium final=medium",
+  "assumptions_and_limitations": [
+    "India-headquartered B2B HR products."
+  ],
+  "next_steps": [
+    "Fetch remaining vendor docs."
+  ],
+  "metadata": {
+    "run_id": "cfc7fb5ac137",
+    "latency_ms": 59.5741999859456,
+    "input_tokens": 1159,
+    "output_tokens": 166,
+    "tool_calls": 3,
+    "replan_used": false,
+    "provider": "gemini",
+    "cheap_model": "gemini-2.5-flash",
+    "strong_model": "gemini-2.5-pro",
+    "errors": [],
+    "cache_hits": 0,
+    "low_evidence_flag": false,
+    "tool_path": [
+      "web_search",
+      "fetch_page"
+    ]
+  }
+}
